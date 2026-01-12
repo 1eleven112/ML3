@@ -436,7 +436,15 @@ def main():
     
     # 加载基础模型
     print("\n加载BERT基础模型...")
-    model, tokenizer, config = create_bert_model(num_labels=2, from_local=True)
+    try:
+        model, tokenizer, config = create_bert_model(num_labels=2, from_local=True)
+    except FileNotFoundError as e:
+        print(f"\n错误: 无法加载模型或数据集")
+        print(f"详细信息: {str(e)}")
+        print("\n请先在联网环境运行以下命令下载资源:")
+        print("  python download_resources.py")
+        print("\n然后将整个项目文件夹复制到离线环境运行。")
+        sys.exit(1)
     
     # 运行实验
     all_results = []

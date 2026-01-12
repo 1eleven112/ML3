@@ -213,17 +213,20 @@ class AdaptiveQuantization:
         self.model = model
         self.num_layers = model.config.num_hidden_layers
     
-    def apply_layer_wise_quantization(self, quantization_bits=[8, 8, 6, 6, 4, 4]):
+    def apply_layer_wise_quantization(self, quantization_bits=None):
         """
         对不同层应用不同位宽的量化
         浅层使用更高位宽，深层使用更低位宽
         
         Args:
-            quantization_bits: 每层的量化位宽列表
+            quantization_bits: 每层的量化位宽列表，如果为None则使用默认配置
             
         Returns:
             model: 自适应量化后的模型
         """
+        if quantization_bits is None:
+            quantization_bits = [8, 8, 6, 6, 4, 4]
+        
         print("应用层级自适应量化...")
         
         # 简化实现：对不同层的Linear层应用不同的量化策略

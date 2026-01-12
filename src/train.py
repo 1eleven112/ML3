@@ -243,7 +243,7 @@ def finetune_model(model, tokenizer, train_dataloader, val_dataloader=None,
 
 
 def progressive_finetune(model, tokenizer, train_dataloader, val_dataloader=None,
-                        stages=[(3, 5e-5), (2, 2e-5), (2, 1e-5)],
+                        stages=None,
                         device='cuda', save_dir='models/progressive'):
     """
     渐进式微调：多阶段训练策略
@@ -254,13 +254,16 @@ def progressive_finetune(model, tokenizer, train_dataloader, val_dataloader=None
         tokenizer: 分词器
         train_dataloader: 训练数据
         val_dataloader: 验证数据
-        stages: 训练阶段列表 [(epochs, lr), ...]
+        stages: 训练阶段列表 [(epochs, lr), ...]，如果为None则使用默认配置
         device: 设备
         save_dir: 保存目录
         
     Returns:
         tuple: (model, history)
     """
+    if stages is None:
+        stages = [(3, 5e-5), (2, 2e-5), (2, 1e-5)]
+    
     print("\n开始渐进式微调...")
     print(f"训练阶段数: {len(stages)}")
     

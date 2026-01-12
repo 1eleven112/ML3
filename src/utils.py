@@ -54,7 +54,7 @@ def count_parameters(model):
     }
 
 
-def measure_inference_time(model, tokenizer, texts, device='cuda', num_runs=100):
+def measure_inference_time(model, tokenizer, texts, device=None, num_runs=100):
     """
     测量模型推理时间
     
@@ -62,12 +62,15 @@ def measure_inference_time(model, tokenizer, texts, device='cuda', num_runs=100)
         model: PyTorch模型
         tokenizer: 分词器
         texts: 测试文本列表
-        device: 设备
+        device: 设备 (None表示自动选择)
         num_runs: 运行次数
         
     Returns:
         dict: 平均推理时间、吞吐量等指标
     """
+    if device is None:
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
     model.eval()
     model.to(device)
     
