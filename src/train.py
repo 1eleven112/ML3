@@ -269,7 +269,8 @@ def finetune_model(model, tokenizer, train_dataloader, val_dataloader=None,
         learning_rate=learning_rate,
         save_dir=save_dir
     )
-    return model, history
+    # 返回trainer.model而不是原始model，因为trainer.model包含了加载的最佳权重
+    return trainer.model, history
 
 
 def progressive_finetune(model, tokenizer, train_dataloader, val_dataloader=None,
@@ -324,4 +325,5 @@ def progressive_finetune(model, tokenizer, train_dataloader, val_dataloader=None
         all_history['val_accuracy'].extend(history['val_accuracy'])
     
     print("\n渐进式微调完成！")
-    return model, all_history
+    # 返回trainer.model而不是原始model，因为trainer.model包含了加载的最佳权重
+    return trainer.model, all_history
