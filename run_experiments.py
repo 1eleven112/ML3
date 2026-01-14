@@ -14,7 +14,7 @@ from transformers import BertTokenizer
 
 from src.model import create_bert_model, BERTModelManager
 from src.quantization import quantize_bert_model, BERTQuantizer
-from src.pruning import prune_bert_model, BERTPruner, AdaptivePruner
+from src.pruning import prune_bert_model, BERTPruner, AdaptivePruner, make_pruning_permanent
 from src.train import finetune_model, progressive_finetune
 from src.evaluate import (ModelEvaluator, compare_models, compare_model_sizes,
                           create_ablation_table, plot_accuracy_vs_compression,
@@ -172,7 +172,6 @@ def run_uniform_pruning_experiment(base_model, tokenizer, train_loader, val_load
     
     # 应用统一剪枝（所有层50%稀疏度）
     print("\n应用统一50%剪枝...")
-    from src.pruning import BERTPruner
     pruner = BERTPruner(model)
     pruner.apply_magnitude_pruning(sparsity_per_layer=0.5)
     
@@ -183,6 +182,9 @@ def run_uniform_pruning_experiment(base_model, tokenizer, train_loader, val_load
         num_epochs=2, learning_rate=1e-5, device=device,
         save_dir='./models/uniform_pruning_50'
     )
+    
+    # 在最终评估前将剪枝永久化
+    make_pruning_permanent(model)
     
     # 评估
     evaluator = ModelEvaluator(model, tokenizer, device=device)
@@ -241,6 +243,10 @@ def run_layer_adaptive_experiment(base_model, tokenizer, train_loader, val_loade
         num_epochs=2, learning_rate=1e-5, device=device,
         save_dir='./models/layer_adaptive'
     )
+    
+    # 在最终评估前将剪枝永久化
+    # make_pruning_permanent already imported at top
+    make_pruning_permanent(model)
     
     # 评估
     evaluator = ModelEvaluator(model, tokenizer, device=device)
@@ -306,6 +312,10 @@ def run_adaptive_importance_experiment(base_model, tokenizer, train_loader, val_
         num_epochs=2, learning_rate=1e-5, device=device,
         save_dir='./models/adaptive_importance'
     )
+    
+    # 在最终评估前将剪枝永久化
+    # make_pruning_permanent already imported at top
+    make_pruning_permanent(model)
     
     # 评估
     evaluator = ModelEvaluator(model, tokenizer, device=device)
@@ -373,6 +383,10 @@ def run_adaptive_importance_progressive_experiment(base_model, tokenizer, train_
         save_dir='./models/adaptive_importance_progressive'
     )
     
+    # 在最终评估前将剪枝永久化
+    # make_pruning_permanent already imported at top
+    make_pruning_permanent(model)
+    
     # 评估
     evaluator = ModelEvaluator(model, tokenizer, device=device)
     metrics = evaluator.evaluate(val_loader)
@@ -438,6 +452,10 @@ def run_all_innovations_experiment(base_model, tokenizer, train_loader, val_load
         device=device,
         save_dir='./models/all_innovations_before_quant'
     )
+    
+    # 在量化前将剪枝永久化
+    # make_pruning_permanent already imported at top
+    make_pruning_permanent(model)
     
     # 步骤4: 动态量化
     print("\n步骤4: 应用动态量化...")

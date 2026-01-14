@@ -181,6 +181,9 @@ class BERTPruner:
         
         Args:
             sparsity: 稀疏度（0-1之间）
+        
+        注意：剪枝后weight_mask会作为buffer存在，训练时PyTorch会自动保证被mask的权重梯度也为0。
+        如需永久化剪枝，在导出模型前调用 make_pruning_permanent()。
         """
         print(f"\n应用非结构化剪枝（稀疏度: {sparsity:.1%}）...")
         
@@ -191,18 +194,17 @@ class BERTPruner:
             if isinstance(module, nn.Linear):
                 parameters_to_prune.append((module, 'weight'))
         
-        # 应用全局非结构化剪枝
+        # 应用全局非结构化剪枝，产生weight_mask
         prune.global_unstructured(
             parameters_to_prune,
             pruning_method=prune.L1Unstructured,
             amount=sparsity,
         )
         
-        # 永久化剪枝（移除mask，直接修改权重）
-        for module, param_name in parameters_to_prune:
-            prune.remove(module, param_name)
+        # 不调用 prune.remove()，保留 weight_mask
+        # 训练时 PyTorch 会自动应用 mask
         
-        print("非结构化剪枝完成！")
+        print("非结构化剪枝完成！（weight_mask已应用，训练时会自动保持稀疏性）")
     
     def apply_magnitude_pruning(self, sparsity_per_layer=0.5):
         """
@@ -210,15 +212,19 @@ class BERTPruner:
         
         Args:
             sparsity_per_layer: 每层的稀疏度
+        
+        注意：剪枝后weight_mask会作为buffer存在，训练时PyTorch会自动保证被mask的权重梯度也为0。
+        如需永久化剪枝，在导出模型前调用 make_pruning_permanent()。
         """
         print(f"\n应用magnitude剪枝（每层稀疏度: {sparsity_per_layer:.1%}）...")
         
         for name, module in self.model.named_modules():
             if isinstance(module, nn.Linear):
+                # 只应用剪枝，产生 weight_mask，PyTorch 会在 forward 时自动应用它
                 prune.l1_unstructured(module, name='weight', amount=sparsity_per_layer)
-                prune.remove(module, 'weight')
+                # 不调用 prune.remove()，保留 weight_mask
         
-        print("Magnitude剪枝完成！")
+        print("Magnitude剪枝完成！（weight_mask已应用，训练时会自动保持稀疏性）")
 
 
 class AdaptivePruner:
@@ -245,6 +251,9 @@ class AdaptivePruner:
         
         Args:
             base_sparsity: 基础稀疏度
+        
+        注意：剪枝后weight_mask会作为buffer存在，训练时PyTorch会自动保证被mask的权重梯度也为0。
+        如需永久化剪枝，在导出模型前调用 make_pruning_permanent()。
         """
         print(f"\n应用层级自适应剪枝（基础稀疏度: {base_sparsity:.1%}）...")
         
@@ -259,12 +268,38 @@ class AdaptivePruner:
             
             for name, module in encoder_layer.named_modules():
                 if isinstance(module, nn.Linear):
+                    # 只应用剪枝，产生 weight_mask，不调用 prune.remove()
                     prune.l1_unstructured(module, name='weight', amount=layer_sparsity)
-                    prune.remove(module, 'weight')
             
             print(f"  Layer {layer_idx}: 稀疏度 {layer_sparsity:.1%}")
         
-        print("层级自适应剪枝完成！")
+        print("层级自适应剪枝完成！（weight_mask已应用，训练时会自动保持稀疏性）")
+
+
+def make_pruning_permanent(model):
+    """
+    将模型中的所有剪枝mask永久化
+    在导出模型或进行量化/速度测试前调用此函数
+    
+    Args:
+        model: 已剪枝的BERT模型
+    
+    注意：此操作会移除weight_mask并直接修改权重，之后无法恢复mask
+    """
+    print("\n将剪枝永久化...")
+    
+    num_removed = 0
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            # 检查是否有 weight_orig（说明有剪枝mask）
+            if hasattr(module, 'weight_orig'):
+                prune.remove(module, 'weight')
+                num_removed += 1
+    
+    if num_removed > 0:
+        print(f"已永久化 {num_removed} 个Linear层的剪枝mask")
+    else:
+        print("未发现需要永久化的剪枝mask")
 
 
 def prune_bert_model(model, method='heads', prune_ratio=0.5, dataloader=None, device='cuda'):
