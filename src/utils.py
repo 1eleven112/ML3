@@ -34,7 +34,7 @@ def get_model_size(model):
 
 def count_parameters(model):
     """
-    统计模型参数量
+    统计模型参数量（考虑剪枝mask）
     
     Args:
         model: PyTorch模型
@@ -42,9 +42,33 @@ def count_parameters(model):
     Returns:
         dict: 总参数量、可训练参数量、非零参数量
     """
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    non_zero_params = sum(torch.count_nonzero(p).item() for p in model.parameters())
+    total_params = 0
+    trainable_params = 0
+    non_zero_params = 0
+    
+    # 遍历所有模块
+    for name, module in model.named_modules():
+        # 检查weight参数
+        if hasattr(module, 'weight') and module.weight is not None:
+            weight = module.weight
+            # 统计总参数
+            total_params += weight.numel()
+            # 统计可训练参数（检查weight_orig如果存在，否则检查weight）
+            if hasattr(module, 'weight_orig'):
+                if module.weight_orig.requires_grad:
+                    trainable_params += weight.numel()
+            elif weight.requires_grad:
+                trainable_params += weight.numel()
+            # 统计非零参数（weight会自动应用mask）
+            non_zero_params += torch.count_nonzero(weight).item()
+        
+        # 检查bias参数
+        if hasattr(module, 'bias') and module.bias is not None:
+            bias = module.bias
+            total_params += bias.numel()
+            if bias.requires_grad:
+                trainable_params += bias.numel()
+            non_zero_params += torch.count_nonzero(bias).item()
     
     return {
         'total': total_params,
