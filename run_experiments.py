@@ -154,21 +154,293 @@ def run_baseline_experiment(model, tokenizer, train_loader, val_loader, device='
     return results, model
 
 
-def run_quantization_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+def run_uniform_pruning_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
     """
-    运行量化实验
+    实验2: 统一50%剪枝
+    对所有层使用统一的50%稀疏度进行剪枝
     
     Returns:
         dict: 实验结果
     """
     print("\n" + "="*80)
-    print("实验2: 动态量化")
+    print("实验2: 统一50%剪枝")
     print("="*80)
     
     # 创建模型副本
     model = copy.deepcopy(base_model)
+    model.to(device)
     
-    # 应用量化
+    # 应用统一剪枝（所有层50%稀疏度）
+    print("\n应用统一50%剪枝...")
+    from src.pruning import BERTPruner
+    pruner = BERTPruner(model)
+    pruner.apply_magnitude_pruning(sparsity_per_layer=0.5)
+    
+    # 标准微调
+    print("\n微调剪枝后的模型...")
+    model, history = finetune_model(
+        model, tokenizer, train_loader, val_loader,
+        num_epochs=2, learning_rate=1e-5, device=device,
+        save_dir='./models/uniform_pruning_50'
+    )
+    
+    # 评估
+    evaluator = ModelEvaluator(model, tokenizer, device=device)
+    metrics = evaluator.evaluate(val_loader)
+    evaluator.print_metrics(metrics, "统一50%剪枝模型")
+    
+    # 模型信息
+    params = count_parameters(model)
+    size = get_model_size(model)
+    base_size = get_model_size(base_model)
+    
+    results = {
+        'name': '统一50%剪枝',
+        'accuracy': metrics['accuracy'],
+        'f1': metrics['f1'],
+        'precision': metrics['precision'],
+        'recall': metrics['recall'],
+        'loss': metrics['loss'],
+        'size_mb': size,
+        'params': params['total'],
+        'non_zero_params': params['non_zero'],
+        'sparsity': params['sparsity'],
+        'compression_ratio': base_size / size if size > 0 else 1.0
+    }
+    
+    print_model_info(model, "统一50%剪枝模型")
+    
+    return results, model
+
+
+def run_layer_adaptive_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+    """
+    实验3: 层级自适应压缩
+    不同层使用不同的稀疏度（浅层30%，深层70%）
+    
+    Returns:
+        dict: 实验结果
+    """
+    print("\n" + "="*80)
+    print("实验3: 层级自适应压缩")
+    print("="*80)
+    
+    # 创建模型副本
+    model = copy.deepcopy(base_model)
+    model.to(device)
+    
+    # 应用层级自适应剪枝
+    print("\n应用层级自适应剪枝...")
+    adaptive_pruner = AdaptivePruner(model)
+    adaptive_pruner.apply_layer_adaptive_pruning(base_sparsity=0.5)
+    
+    # 标准微调
+    print("\n微调剪枝后的模型...")
+    model, history = finetune_model(
+        model, tokenizer, train_loader, val_loader,
+        num_epochs=2, learning_rate=1e-5, device=device,
+        save_dir='./models/layer_adaptive'
+    )
+    
+    # 评估
+    evaluator = ModelEvaluator(model, tokenizer, device=device)
+    metrics = evaluator.evaluate(val_loader)
+    evaluator.print_metrics(metrics, "层级自适应压缩模型")
+    
+    # 模型信息
+    params = count_parameters(model)
+    size = get_model_size(model)
+    base_size = get_model_size(base_model)
+    
+    results = {
+        'name': '层级自适应压缩',
+        'accuracy': metrics['accuracy'],
+        'f1': metrics['f1'],
+        'precision': metrics['precision'],
+        'recall': metrics['recall'],
+        'loss': metrics['loss'],
+        'size_mb': size,
+        'params': params['total'],
+        'non_zero_params': params['non_zero'],
+        'sparsity': params['sparsity'],
+        'compression_ratio': base_size / size if size > 0 else 1.0
+    }
+    
+    print_model_info(model, "层级自适应压缩模型")
+    
+    return results, model
+
+
+def run_adaptive_importance_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+    """
+    实验4: 层级自适应压缩 + 改进的重要性评估
+    在层级自适应基础上，使用基于梯度的重要性评估进行注意力头剪枝
+    
+    Returns:
+        dict: 实验结果
+    """
+    print("\n" + "="*80)
+    print("实验4: 层级自适应 + 改进的重要性评估")
+    print("="*80)
+    
+    # 创建模型副本
+    model = copy.deepcopy(base_model)
+    model.to(device)
+    
+    # 步骤1: 应用层级自适应剪枝（FFN层）
+    print("\n步骤1: 应用层级自适应剪枝...")
+    adaptive_pruner = AdaptivePruner(model)
+    adaptive_pruner.apply_layer_adaptive_pruning(base_sparsity=0.5)
+    
+    # 步骤2: 使用改进的重要性评估进行注意力头剪枝
+    print("\n步骤2: 使用改进的重要性评估剪枝注意力头...")
+    pruner = BERTPruner(model)
+    pruner.compute_head_importance(train_loader, device=device, num_batches=30)
+    heads_to_prune = pruner.get_heads_to_prune(prune_ratio=0.3)  # 剪枝30%的头
+    pruner.prune_attention_heads(heads_to_prune)
+    
+    # 标准微调
+    print("\n微调模型...")
+    model, history = finetune_model(
+        model, tokenizer, train_loader, val_loader,
+        num_epochs=2, learning_rate=1e-5, device=device,
+        save_dir='./models/adaptive_importance'
+    )
+    
+    # 评估
+    evaluator = ModelEvaluator(model, tokenizer, device=device)
+    metrics = evaluator.evaluate(val_loader)
+    evaluator.print_metrics(metrics, "层级自适应+重要性评估模型")
+    
+    # 模型信息
+    params = count_parameters(model)
+    size = get_model_size(model)
+    base_size = get_model_size(base_model)
+    
+    results = {
+        'name': '层级自适应+重要性评估',
+        'accuracy': metrics['accuracy'],
+        'f1': metrics['f1'],
+        'precision': metrics['precision'],
+        'recall': metrics['recall'],
+        'loss': metrics['loss'],
+        'size_mb': size,
+        'params': params['total'],
+        'non_zero_params': params['non_zero'],
+        'sparsity': params['sparsity'],
+        'compression_ratio': base_size / size if size > 0 else 1.0
+    }
+    
+    print_model_info(model, "层级自适应+重要性评估模型")
+    
+    return results, model
+
+
+def run_adaptive_importance_progressive_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+    """
+    实验5: 层级自适应 + 改进的重要性评估 + 渐进式恢复训练
+    在前两个创新基础上，使用渐进式多阶段微调
+    
+    Returns:
+        dict: 实验结果
+    """
+    print("\n" + "="*80)
+    print("实验5: 层级自适应 + 重要性评估 + 渐进式恢复训练")
+    print("="*80)
+    
+    # 创建模型副本
+    model = copy.deepcopy(base_model)
+    model.to(device)
+    
+    # 步骤1: 应用层级自适应剪枝（FFN层）
+    print("\n步骤1: 应用层级自适应剪枝...")
+    adaptive_pruner = AdaptivePruner(model)
+    adaptive_pruner.apply_layer_adaptive_pruning(base_sparsity=0.5)
+    
+    # 步骤2: 使用改进的重要性评估进行注意力头剪枝
+    print("\n步骤2: 使用改进的重要性评估剪枝注意力头...")
+    pruner = BERTPruner(model)
+    pruner.compute_head_importance(train_loader, device=device, num_batches=30)
+    heads_to_prune = pruner.get_heads_to_prune(prune_ratio=0.3)
+    pruner.prune_attention_heads(heads_to_prune)
+    
+    # 步骤3: 渐进式微调
+    print("\n步骤3: 应用渐进式恢复训练...")
+    model, _ = progressive_finetune(
+        model, tokenizer, train_loader, val_loader,
+        stages=[(2, 2e-5), (2, 1e-5)],
+        device=device,
+        save_dir='./models/adaptive_importance_progressive'
+    )
+    
+    # 评估
+    evaluator = ModelEvaluator(model, tokenizer, device=device)
+    metrics = evaluator.evaluate(val_loader)
+    evaluator.print_metrics(metrics, "层级自适应+重要性评估+渐进式训练模型")
+    
+    # 模型信息
+    params = count_parameters(model)
+    size = get_model_size(model)
+    base_size = get_model_size(base_model)
+    
+    results = {
+        'name': '层级自适应+重要性评估+渐进式训练',
+        'accuracy': metrics['accuracy'],
+        'f1': metrics['f1'],
+        'precision': metrics['precision'],
+        'recall': metrics['recall'],
+        'loss': metrics['loss'],
+        'size_mb': size,
+        'params': params['total'],
+        'non_zero_params': params['non_zero'],
+        'sparsity': params['sparsity'],
+        'compression_ratio': base_size / size if size > 0 else 1.0
+    }
+    
+    print_model_info(model, "层级自适应+重要性评估+渐进式训练模型")
+    
+    return results, model
+
+
+def run_all_innovations_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+    """
+    实验6: 所有创新方法组合 + 动态量化
+    层级自适应 + 改进的重要性评估 + 渐进式恢复训练 + 动态量化
+    
+    Returns:
+        dict: 实验结果
+    """
+    print("\n" + "="*80)
+    print("实验6: 所有创新方法 + 动态量化")
+    print("="*80)
+    
+    # 创建模型副本
+    model = copy.deepcopy(base_model)
+    model.to(device)
+    
+    # 步骤1: 应用层级自适应剪枝（FFN层）
+    print("\n步骤1: 应用层级自适应剪枝...")
+    adaptive_pruner = AdaptivePruner(model)
+    adaptive_pruner.apply_layer_adaptive_pruning(base_sparsity=0.5)
+    
+    # 步骤2: 使用改进的重要性评估进行注意力头剪枝
+    print("\n步骤2: 使用改进的重要性评估剪枝注意力头...")
+    pruner = BERTPruner(model)
+    pruner.compute_head_importance(train_loader, device=device, num_batches=30)
+    heads_to_prune = pruner.get_heads_to_prune(prune_ratio=0.3)
+    pruner.prune_attention_heads(heads_to_prune)
+    
+    # 步骤3: 渐进式微调
+    print("\n步骤3: 应用渐进式恢复训练...")
+    model, _ = progressive_finetune(
+        model, tokenizer, train_loader, val_loader,
+        stages=[(2, 2e-5), (2, 1e-5)],
+        device=device,
+        save_dir='./models/all_innovations_before_quant'
+    )
+    
+    # 步骤4: 动态量化
+    print("\n步骤4: 应用动态量化...")
     quantizer = BERTQuantizer(model)
     quantized_model = quantizer.apply_dynamic_quantization()
     
@@ -176,7 +448,7 @@ def run_quantization_experiment(base_model, tokenizer, train_loader, val_loader,
     quantized_model.to(device)
     evaluator = ModelEvaluator(quantized_model, tokenizer, device=device)
     metrics = evaluator.evaluate(val_loader)
-    evaluator.print_metrics(metrics, "量化模型")
+    evaluator.print_metrics(metrics, "所有创新方法+量化模型")
     
     # 模型信息
     params = count_parameters(quantized_model)
@@ -184,7 +456,7 @@ def run_quantization_experiment(base_model, tokenizer, train_loader, val_loader,
     base_size = get_model_size(base_model)
     
     results = {
-        'name': '量化-INT8',
+        'name': '所有创新方法+量化',
         'accuracy': metrics['accuracy'],
         'f1': metrics['f1'],
         'precision': metrics['precision'],
@@ -197,205 +469,22 @@ def run_quantization_experiment(base_model, tokenizer, train_loader, val_loader,
         'compression_ratio': base_size / size if size > 0 else 1.0
     }
     
-    print_model_info(quantized_model, "量化模型")
+    print_model_info(quantized_model, "所有创新方法+量化模型")
     
-    # 保存模型
-    torch.save(quantized_model.state_dict(), './models/quantized/model.pth')
+    # 保存最终模型
+    torch.save(quantized_model.state_dict(), './models/all_innovations/model.pth')
     
     return results, quantized_model
-
-
-def run_pruning_experiment(base_model, tokenizer, train_loader, val_loader, 
-                          prune_ratio=0.5, device='cuda'):
-    """
-    运行剪枝实验
-    
-    Args:
-        prune_ratio: 剪枝比例
-        
-    Returns:
-        dict: 实验结果
-    """
-    print("\n" + "="*80)
-    print(f"实验3: 注意力头剪枝 (比例: {prune_ratio:.1%})")
-    print("="*80)
-    
-    # 创建模型副本
-    model = copy.deepcopy(base_model)
-    model.to(device)
-    
-    # 应用剪枝
-    pruner = BERTPruner(model)
-    pruner.compute_head_importance(train_loader, device=device, num_batches=30)
-    heads_to_prune = pruner.get_heads_to_prune(prune_ratio=prune_ratio)
-    pruner.prune_attention_heads(heads_to_prune)
-    
-    # 微调
-    print("\n微调剪枝后的模型...")
-    model, history = finetune_model(
-        model, tokenizer, train_loader, val_loader,
-        num_epochs=2, learning_rate=1e-5, device=device,
-        save_dir=f'./models/pruned_{int(prune_ratio*100)}'
-    )
-    
-    # 评估
-    evaluator = ModelEvaluator(model, tokenizer, device=device)
-    metrics = evaluator.evaluate(val_loader)
-    evaluator.print_metrics(metrics, f"剪枝模型 ({prune_ratio:.0%})")
-    
-    # 模型信息
-    params = count_parameters(model)
-    size = get_model_size(model)
-    base_size = get_model_size(base_model)
-    
-    results = {
-        'name': f'剪枝-{int(prune_ratio*100)}%',
-        'accuracy': metrics['accuracy'],
-        'f1': metrics['f1'],
-        'precision': metrics['precision'],
-        'recall': metrics['recall'],
-        'loss': metrics['loss'],
-        'size_mb': size,
-        'params': params['total'],
-        'non_zero_params': params['non_zero'],
-        'sparsity': params['sparsity'],
-        'compression_ratio': base_size / size if size > 0 else 1.0
-    }
-    
-    print_model_info(model, f"剪枝模型 ({prune_ratio:.0%})")
-    
-    return results, model
-
-
-def run_combined_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
-    """
-    运行组合实验：先剪枝后量化
-    
-    Returns:
-        dict: 实验结果
-    """
-    print("\n" + "="*80)
-    print("实验4: 组合方法 (剪枝 + 量化)")
-    print("="*80)
-    
-    # 创建模型副本
-    model = copy.deepcopy(base_model)
-    model.to(device)
-    
-    # 步骤1: 剪枝
-    print("\n步骤1: 应用剪枝...")
-    pruner = BERTPruner(model)
-    pruner.compute_head_importance(train_loader, device=device, num_batches=30)
-    heads_to_prune = pruner.get_heads_to_prune(prune_ratio=0.5)
-    pruner.prune_attention_heads(heads_to_prune)
-    
-    # 微调剪枝后的模型
-    print("\n微调剪枝后的模型...")
-    model, _ = finetune_model(
-        model, tokenizer, train_loader, val_loader,
-        num_epochs=2, learning_rate=1e-5, device=device,
-        save_dir='./models/combined_pruned'
-    )
-    
-    # 步骤2: 量化
-    print("\n步骤2: 应用量化...")
-    quantizer = BERTQuantizer(model)
-    combined_model = quantizer.apply_dynamic_quantization()
-    
-    # 评估
-    combined_model.to(device)
-    evaluator = ModelEvaluator(combined_model, tokenizer, device=device)
-    metrics = evaluator.evaluate(val_loader)
-    evaluator.print_metrics(metrics, "组合模型")
-    
-    # 模型信息
-    params = count_parameters(combined_model)
-    size = get_model_size(combined_model)
-    base_size = get_model_size(base_model)
-    
-    results = {
-        'name': '组合(剪枝+量化)',
-        'accuracy': metrics['accuracy'],
-        'f1': metrics['f1'],
-        'precision': metrics['precision'],
-        'recall': metrics['recall'],
-        'loss': metrics['loss'],
-        'size_mb': size,
-        'params': params['total'],
-        'non_zero_params': params['non_zero'],
-        'sparsity': params['sparsity'],
-        'compression_ratio': base_size / size if size > 0 else 1.0
-    }
-    
-    print_model_info(combined_model, "组合模型")
-    
-    return results, combined_model
-
-
-def run_adaptive_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
-    """
-    运行创新实验：层级自适应剪枝
-    
-    Returns:
-        dict: 实验结果
-    """
-    print("\n" + "="*80)
-    print("实验5: 创新方法 - 层级自适应剪枝")
-    print("="*80)
-    
-    # 创建模型副本
-    model = copy.deepcopy(base_model)
-    model.to(device)
-    
-    # 应用自适应剪枝
-    adaptive_pruner = AdaptivePruner(model)
-    adaptive_pruner.apply_layer_adaptive_pruning(base_sparsity=0.5)
-    
-    # 渐进式微调
-    print("\n应用渐进式微调...")
-    model, _ = progressive_finetune(
-        model, tokenizer, train_loader, val_loader,
-        stages=[(2, 2e-5), (2, 1e-5)],
-        device=device,
-        save_dir='./models/adaptive'
-    )
-    
-    # 评估
-    evaluator = ModelEvaluator(model, tokenizer, device=device)
-    metrics = evaluator.evaluate(val_loader)
-    evaluator.print_metrics(metrics, "层级自适应模型")
-    
-    # 模型信息
-    params = count_parameters(model)
-    size = get_model_size(model)
-    base_size = get_model_size(base_model)
-    
-    results = {
-        'name': '创新-层级自适应',
-        'accuracy': metrics['accuracy'],
-        'f1': metrics['f1'],
-        'precision': metrics['precision'],
-        'recall': metrics['recall'],
-        'loss': metrics['loss'],
-        'size_mb': size,
-        'params': params['total'],
-        'non_zero_params': params['non_zero'],
-        'sparsity': params['sparsity'],
-        'compression_ratio': base_size / size if size > 0 else 1.0
-    }
-    
-    print_model_info(model, "层级自适应模型")
-    
-    return results, model
 
 
 def main():
     """
     主函数：运行所有实验
     """
-    parser = argparse.ArgumentParser(description='BERT模型压缩实验')
+    parser = argparse.ArgumentParser(description='BERT模型压缩实验 - 消融实验')
     parser.add_argument('--mode', type=str, default='all',
-                       choices=['all', 'baseline', 'quantization', 'pruning', 'combined', 'adaptive'],
+                       choices=['all', 'baseline', 'uniform', 'layer_adaptive', 'adaptive_importance', 
+                                'adaptive_progressive', 'all_innovations'],
                        help='实验模式')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                        help='设备')
@@ -407,7 +496,7 @@ def main():
     args = parser.parse_args()
     
     print("\n" + "="*80)
-    print("BERT模型压缩实验")
+    print("BERT模型压缩实验 - 消融实验")
     print("="*80)
     print(f"设备: {args.device}")
     print(f"批次大小: {args.batch_size}")
@@ -420,11 +509,11 @@ def main():
     # 创建结果目录
     ensure_dir('./results')
     ensure_dir('./models/baseline')
-    ensure_dir('./models/quantized')
-    ensure_dir('./models/pruned_50')
-    ensure_dir('./models/pruned_70')
-    ensure_dir('./models/combined_pruned')
-    ensure_dir('./models/adaptive')
+    ensure_dir('./models/uniform_pruning_50')
+    ensure_dir('./models/layer_adaptive')
+    ensure_dir('./models/adaptive_importance')
+    ensure_dir('./models/adaptive_importance_progressive')
+    ensure_dir('./models/all_innovations')
     
     # 加载数据
     print("加载数据...")
@@ -449,6 +538,7 @@ def main():
     # 运行实验
     all_results = []
     
+    # 实验1: 基线模型
     if args.mode in ['all', 'baseline']:
         baseline_results, baseline_model = run_baseline_experiment(
             copy.deepcopy(model), tokenizer, train_loader, val_loader, args.device
@@ -457,37 +547,40 @@ def main():
     else:
         baseline_model = model
     
-    if args.mode in ['all', 'quantization']:
-        quant_results, _ = run_quantization_experiment(
+    # 实验2: 统一50%剪枝
+    if args.mode in ['all', 'uniform']:
+        uniform_results, _ = run_uniform_pruning_experiment(
             baseline_model, tokenizer, train_loader, val_loader, args.device
         )
-        all_results.append(quant_results)
+        all_results.append(uniform_results)
     
-    if args.mode in ['all', 'pruning']:
-        prune_50_results, _ = run_pruning_experiment(
-            baseline_model, tokenizer, train_loader, val_loader, 
-            prune_ratio=0.5, device=args.device
-        )
-        all_results.append(prune_50_results)
-        
-        # 额外的高稀疏度实验
-        prune_70_results, _ = run_pruning_experiment(
-            baseline_model, tokenizer, train_loader, val_loader,
-            prune_ratio=0.7, device=args.device
-        )
-        all_results.append(prune_70_results)
-    
-    if args.mode in ['all', 'combined']:
-        combined_results, _ = run_combined_experiment(
+    # 实验3: 层级自适应压缩
+    if args.mode in ['all', 'layer_adaptive']:
+        layer_adaptive_results, _ = run_layer_adaptive_experiment(
             baseline_model, tokenizer, train_loader, val_loader, args.device
         )
-        all_results.append(combined_results)
+        all_results.append(layer_adaptive_results)
     
-    if args.mode in ['all', 'adaptive']:
-        adaptive_results, _ = run_adaptive_experiment(
+    # 实验4: 层级自适应 + 改进的重要性评估
+    if args.mode in ['all', 'adaptive_importance']:
+        adaptive_importance_results, _ = run_adaptive_importance_experiment(
             baseline_model, tokenizer, train_loader, val_loader, args.device
         )
-        all_results.append(adaptive_results)
+        all_results.append(adaptive_importance_results)
+    
+    # 实验5: 层级自适应 + 重要性评估 + 渐进式训练
+    if args.mode in ['all', 'adaptive_progressive']:
+        adaptive_progressive_results, _ = run_adaptive_importance_progressive_experiment(
+            baseline_model, tokenizer, train_loader, val_loader, args.device
+        )
+        all_results.append(adaptive_progressive_results)
+    
+    # 实验6: 所有创新方法 + 动态量化
+    if args.mode in ['all', 'all_innovations']:
+        all_innovations_results, _ = run_all_innovations_experiment(
+            baseline_model, tokenizer, train_loader, val_loader, args.device
+        )
+        all_results.append(all_innovations_results)
     
     # 生成报告
     print("\n" + "="*80)
