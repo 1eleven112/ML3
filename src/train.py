@@ -74,6 +74,7 @@ class BERTTrainer:
         }
         
         best_val_accuracy = 0.0
+        best_model_saved = False
         
         for epoch in range(num_epochs):
             print(f"\nEpoch {epoch + 1}/{num_epochs}")
@@ -98,7 +99,16 @@ class BERTTrainer:
                 if val_accuracy > best_val_accuracy:
                     best_val_accuracy = val_accuracy
                     self.save_model(save_dir)
+                    best_model_saved = True
                     print(f"✓ 保存最佳模型 (准确率: {best_val_accuracy:.4f})")
+        
+        # 加载最佳模型（如果保存过）
+        if best_model_saved and val_dataloader is not None:
+            print(f"\n加载最佳模型 (准确率: {best_val_accuracy:.4f})")
+            model_path = os.path.join(save_dir, 'pytorch_model.bin')
+            if os.path.exists(model_path):
+                self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+                self.model.to(self.device)
         
         print("\n训练完成！")
         return history
@@ -187,27 +197,47 @@ class BERTTrainer:
     
     def save_model(self, save_dir):
         """
-        保存模型
+        保存模型（保留剪枝masks）
         
         Args:
             save_dir: 保存目录
         """
         os.makedirs(save_dir, exist_ok=True)
-        self.model.save_pretrained(save_dir)
+        
+        # 使用torch.save保存state_dict以保留剪枝masks
+        model_path = os.path.join(save_dir, 'pytorch_model.bin')
+        torch.save(self.model.state_dict(), model_path)
+        
+        # 保存配置文件
+        self.model.config.save_pretrained(save_dir)
         self.tokenizer.save_pretrained(save_dir)
         print(f"模型已保存到: {save_dir}")
     
     def load_model(self, load_dir):
         """
-        加载模型
+        加载模型（包含剪枝masks）
         
         Args:
             load_dir: 加载目录
         """
         from transformers import BertForSequenceClassification, BertTokenizer
         
-        self.model = BertForSequenceClassification.from_pretrained(load_dir)
+        # 加载配置和tokenizer
         self.tokenizer = BertTokenizer.from_pretrained(load_dir)
+        
+        # 加载state_dict以保留剪枝masks
+        model_path = os.path.join(load_dir, 'pytorch_model.bin')
+        if os.path.exists(model_path):
+            # 先创建模型结构
+            from transformers import BertConfig
+            config = BertConfig.from_pretrained(load_dir)
+            self.model = BertForSequenceClassification.from_config(config)
+            # 加载权重（包括剪枝masks）
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        else:
+            # 兼容旧格式
+            self.model = BertForSequenceClassification.from_pretrained(load_dir)
+        
         self.model.to(self.device)
         print(f"模型已从 {load_dir} 加载")
 

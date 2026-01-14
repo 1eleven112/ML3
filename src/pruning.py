@@ -218,13 +218,16 @@ class BERTPruner:
         """
         print(f"\n应用magnitude剪枝（每层稀疏度: {sparsity_per_layer:.1%}）...")
         
+        num_pruned = 0
         for name, module in self.model.named_modules():
             if isinstance(module, nn.Linear):
                 # 只应用剪枝，产生 weight_mask，PyTorch 会在 forward 时自动应用它
                 prune.l1_unstructured(module, name='weight', amount=sparsity_per_layer)
+                num_pruned += 1
                 # 不调用 prune.remove()，保留 weight_mask
         
-        print("Magnitude剪枝完成！（weight_mask已应用，训练时会自动保持稀疏性）")
+        print(f"Magnitude剪枝完成！已对 {num_pruned} 个Linear层应用剪枝")
+        print(f"（weight_mask已应用，训练时会自动保持稀疏性）")
 
 
 class AdaptivePruner:
@@ -257,6 +260,7 @@ class AdaptivePruner:
         """
         print(f"\n应用层级自适应剪枝（基础稀疏度: {base_sparsity:.1%}）...")
         
+        total_pruned = 0
         for layer_idx in range(self.num_layers):
             # 计算该层的稀疏度：深层更高
             # 浅层: 0.3, 中层: 0.5, 深层: 0.7
@@ -266,14 +270,18 @@ class AdaptivePruner:
             # 获取该层的所有Linear模块
             encoder_layer = self.model.bert.encoder.layer[layer_idx]
             
+            layer_pruned = 0
             for name, module in encoder_layer.named_modules():
                 if isinstance(module, nn.Linear):
                     # 只应用剪枝，产生 weight_mask，不调用 prune.remove()
                     prune.l1_unstructured(module, name='weight', amount=layer_sparsity)
+                    layer_pruned += 1
             
-            print(f"  Layer {layer_idx}: 稀疏度 {layer_sparsity:.1%}")
+            total_pruned += layer_pruned
+            print(f"  Layer {layer_idx}: 稀疏度 {layer_sparsity:.1%}, 剪枝 {layer_pruned} 个Linear层")
         
-        print("层级自适应剪枝完成！（weight_mask已应用，训练时会自动保持稀疏性）")
+        print(f"层级自适应剪枝完成！总共对 {total_pruned} 个Linear层应用剪枝")
+        print(f"（weight_mask已应用，训练时会自动保持稀疏性）")
 
 
 def make_pruning_permanent(model):
