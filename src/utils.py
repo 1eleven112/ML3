@@ -46,28 +46,38 @@ def count_parameters(model):
     trainable_params = 0
     non_zero_params = 0
     
-    # 遍历所有模块
+    # 使用named_parameters来避免重复计数，但需要特殊处理剪枝
+    param_names_seen = set()
+    
+    for name, param in model.named_parameters():
+        # 去掉_orig后缀来获取原始参数名
+        base_name = name.replace('_orig', '')
+        
+        # 避免重复计数同一个参数
+        if base_name in param_names_seen:
+            continue
+        param_names_seen.add(base_name)
+        
+        # 统计总参数和可训练参数
+        total_params += param.numel()
+        if param.requires_grad:
+            trainable_params += param.numel()
+    
+    # 遍历模块来统计非零参数（需要考虑mask）
     for name, module in model.named_modules():
+        # 只处理叶子模块（有参数的模块）
+        if len(list(module.children())) > 0:
+            continue
+            
         # 检查weight参数
         if hasattr(module, 'weight') and module.weight is not None:
             weight = module.weight
-            # 统计总参数
-            total_params += weight.numel()
-            # 统计可训练参数（检查weight_orig如果存在，否则检查weight）
-            if hasattr(module, 'weight_orig'):
-                if module.weight_orig.requires_grad:
-                    trainable_params += weight.numel()
-            elif weight.requires_grad:
-                trainable_params += weight.numel()
             # 统计非零参数（weight会自动应用mask）
             non_zero_params += torch.count_nonzero(weight).item()
         
         # 检查bias参数
         if hasattr(module, 'bias') and module.bias is not None:
             bias = module.bias
-            total_params += bias.numel()
-            if bias.requires_grad:
-                trainable_params += bias.numel()
             non_zero_params += torch.count_nonzero(bias).item()
     
     return {

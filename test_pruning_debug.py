@@ -35,7 +35,12 @@ with tempfile.TemporaryDirectory() as tmpdir:
     
     # Create new layer and load
     new_layer = nn.Linear(100, 50)
-    new_layer.load_state_dict(torch.load(save_path))
+    # Need to apply pruning structure before loading if state_dict has masks
+    state_dict = torch.load(save_path, weights_only=False)
+    if 'weight_orig' in state_dict:
+        print("\n  State dict contains pruning masks, applying pruning structure first...")
+        prune.l1_unstructured(new_layer, name='weight', amount=0.0)  # Apply empty pruning to create structure
+    new_layer.load_state_dict(state_dict)
     
     print(f"\nAfter loading state_dict:")
     print(f"  Non-zero weights: {torch.count_nonzero(new_layer.weight).item()}")
@@ -95,7 +100,8 @@ try:
         torch.save(model.state_dict(), save_path)
         
         # Load back
-        model.load_state_dict(torch.load(save_path))
+        state_dict = torch.load(save_path, weights_only=False)
+        model.load_state_dict(state_dict)
         
         print("After loading state_dict:")
         params_after_load = count_parameters(model)
