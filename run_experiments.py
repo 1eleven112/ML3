@@ -447,11 +447,12 @@ def run_all_innovations_experiment(exp5_model, tokenizer, train_loader, val_load
     quantizer = BERTQuantizer(model)
     quantized_model = quantizer.apply_dynamic_quantization()
     
-    # 评估
-    quantized_model.to(device)
-    evaluator = ModelEvaluator(quantized_model, tokenizer, device=device)
+    # 评估（量化模型在CPU上评估）
+    print("\n将量化模型移至CPU进行评估...")
+    quantized_model.to('cpu')
+    evaluator = ModelEvaluator(quantized_model, tokenizer, device='cpu')
     metrics = evaluator.evaluate(val_loader)
-    evaluator.print_metrics(metrics, "所有创新方法+量化模型")
+    evaluator.print_metrics(metrics, "所有创新方法+量化模型 (在 CPU 上评估)")
     
     # 模型信息
     params = count_parameters(quantized_model)
