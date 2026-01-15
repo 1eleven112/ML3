@@ -154,10 +154,15 @@ def run_baseline_experiment(model, tokenizer, train_loader, val_loader, device='
     return results, model
 
 
-def run_uniform_pruning_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+def run_uniform_pruning_experiment(baseline_model, tokenizer, train_loader, val_loader, device='cuda', baseline_size=None):
     """
     实验2: 统一50%剪枝
     对所有层使用统一的50%稀疏度进行剪枝
+    从实验1的微调基线模型开始
+    
+    Args:
+        baseline_model: 实验1的微调基线模型
+        baseline_size: 基线模型大小（MB），用于计算压缩率
     
     Returns:
         dict: 实验结果
@@ -166,8 +171,8 @@ def run_uniform_pruning_experiment(base_model, tokenizer, train_loader, val_load
     print("实验2: 统一50%剪枝")
     print("="*80)
     
-    # 创建模型副本
-    model = copy.deepcopy(base_model)
+    # 创建模型副本（从微调基线开始）
+    model = copy.deepcopy(baseline_model)
     model.to(device)
     
     # 应用统一剪枝（所有层50%稀疏度）
@@ -194,7 +199,8 @@ def run_uniform_pruning_experiment(base_model, tokenizer, train_loader, val_load
     # 模型信息
     params = count_parameters(model)
     size = get_model_size(model)
-    base_size = get_model_size(base_model)
+    if baseline_size is None:
+        baseline_size = get_model_size(baseline_model)
     
     results = {
         'name': '统一50%剪枝',
@@ -207,7 +213,7 @@ def run_uniform_pruning_experiment(base_model, tokenizer, train_loader, val_load
         'params': params['total'],
         'non_zero_params': params['non_zero'],
         'sparsity': params['sparsity'],
-        'compression_ratio': base_size / size if size > 0 else 1.0
+        'compression_ratio': baseline_size / size if size > 0 else 1.0
     }
     
     print_model_info(model, "统一50%剪枝模型")
@@ -215,10 +221,15 @@ def run_uniform_pruning_experiment(base_model, tokenizer, train_loader, val_load
     return results, model
 
 
-def run_layer_adaptive_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+def run_layer_adaptive_experiment(baseline_model, tokenizer, train_loader, val_loader, device='cuda', baseline_size=None):
     """
     实验3: 层级自适应压缩
     不同层使用不同的稀疏度（浅层30%，深层70%）
+    从实验1的微调基线模型开始
+    
+    Args:
+        baseline_model: 实验1的微调基线模型
+        baseline_size: 基线模型大小（MB），用于计算压缩率
     
     Returns:
         dict: 实验结果
@@ -227,8 +238,8 @@ def run_layer_adaptive_experiment(base_model, tokenizer, train_loader, val_loade
     print("实验3: 层级自适应压缩")
     print("="*80)
     
-    # 创建模型副本
-    model = copy.deepcopy(base_model)
+    # 创建模型副本（从微调基线开始）
+    model = copy.deepcopy(baseline_model)
     model.to(device)
     
     # 应用层级自适应剪枝
@@ -256,7 +267,8 @@ def run_layer_adaptive_experiment(base_model, tokenizer, train_loader, val_loade
     # 模型信息
     params = count_parameters(model)
     size = get_model_size(model)
-    base_size = get_model_size(base_model)
+    if baseline_size is None:
+        baseline_size = get_model_size(baseline_model)
     
     results = {
         'name': '层级自适应压缩',
@@ -269,7 +281,7 @@ def run_layer_adaptive_experiment(base_model, tokenizer, train_loader, val_loade
         'params': params['total'],
         'non_zero_params': params['non_zero'],
         'sparsity': params['sparsity'],
-        'compression_ratio': base_size / size if size > 0 else 1.0
+        'compression_ratio': baseline_size / size if size > 0 else 1.0
     }
     
     print_model_info(model, "层级自适应压缩模型")
@@ -277,10 +289,14 @@ def run_layer_adaptive_experiment(base_model, tokenizer, train_loader, val_loade
     return results, model
 
 
-def run_adaptive_importance_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+def run_adaptive_importance_experiment(exp3_model, tokenizer, train_loader, val_loader, device='cuda', baseline_size=None):
     """
     实验4: 层级自适应压缩 + 改进的重要性评估
-    在层级自适应基础上，使用基于梯度的重要性评估进行注意力头剪枝
+    在实验3（层级自适应）基础上，添加基于梯度的重要性评估进行注意力头剪枝
+    
+    Args:
+        exp3_model: 实验3的模型（已应用层级自适应剪枝）
+        baseline_size: 基线模型大小（MB），用于计算压缩率
     
     Returns:
         dict: 实验结果
@@ -289,24 +305,19 @@ def run_adaptive_importance_experiment(base_model, tokenizer, train_loader, val_
     print("实验4: 层级自适应 + 改进的重要性评估")
     print("="*80)
     
-    # 创建模型副本
-    model = copy.deepcopy(base_model)
+    # 创建模型副本（从实验3开始）
+    model = copy.deepcopy(exp3_model)
     model.to(device)
     
-    # 步骤1: 应用层级自适应剪枝（FFN层）
-    print("\n步骤1: 应用层级自适应剪枝...")
-    adaptive_pruner = AdaptivePruner(model)
-    adaptive_pruner.apply_layer_adaptive_pruning(base_sparsity=0.5)
-    
-    # 步骤2: 使用改进的重要性评估进行注意力头剪枝
-    print("\n步骤2: 使用改进的重要性评估剪枝注意力头...")
+    # 步骤1: 使用改进的重要性评估进行注意力头剪枝（创新2）
+    print("\n步骤1: 使用改进的重要性评估剪枝注意力头...")
     pruner = BERTPruner(model)
     pruner.compute_head_importance(train_loader, device=device, num_batches=30)
     heads_to_prune = pruner.get_heads_to_prune(prune_ratio=0.3)  # 剪枝30%的头
     pruner.prune_attention_heads(heads_to_prune)
     
-    # 标准微调
-    print("\n微调模型...")
+    # 步骤2: 微调模型以恢复性能
+    print("\n步骤2: 微调模型...")
     model, history = finetune_model(
         model, tokenizer, train_loader, val_loader,
         num_epochs=2, learning_rate=1e-5, device=device,
@@ -325,7 +336,7 @@ def run_adaptive_importance_experiment(base_model, tokenizer, train_loader, val_
     # 模型信息
     params = count_parameters(model)
     size = get_model_size(model)
-    base_size = get_model_size(base_model)
+    # baseline_size passed as parameter
     
     results = {
         'name': '层级自适应+重要性评估',
@@ -338,7 +349,7 @@ def run_adaptive_importance_experiment(base_model, tokenizer, train_loader, val_
         'params': params['total'],
         'non_zero_params': params['non_zero'],
         'sparsity': params['sparsity'],
-        'compression_ratio': base_size / size if size > 0 else 1.0
+        'compression_ratio': baseline_size / size if baseline_size and size > 0 else 1.0
     }
     
     print_model_info(model, "层级自适应+重要性评估模型")
@@ -346,10 +357,14 @@ def run_adaptive_importance_experiment(base_model, tokenizer, train_loader, val_
     return results, model
 
 
-def run_adaptive_importance_progressive_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+def run_adaptive_importance_progressive_experiment(exp4_model, tokenizer, train_loader, val_loader, device='cuda', baseline_size=None):
     """
     实验5: 层级自适应 + 改进的重要性评估 + 渐进式恢复训练
-    在前两个创新基础上，使用渐进式多阶段微调
+    在实验4基础上，添加渐进式多阶段微调（创新3）
+    
+    Args:
+        exp4_model: 实验4的模型（已应用层级自适应+重要性评估）
+        baseline_size: 基线模型大小（MB），用于计算压缩率
     
     Returns:
         dict: 实验结果
@@ -358,24 +373,12 @@ def run_adaptive_importance_progressive_experiment(base_model, tokenizer, train_
     print("实验5: 层级自适应 + 重要性评估 + 渐进式恢复训练")
     print("="*80)
     
-    # 创建模型副本
-    model = copy.deepcopy(base_model)
+    # 创建模型副本（从实验4开始）
+    model = copy.deepcopy(exp4_model)
     model.to(device)
     
-    # 步骤1: 应用层级自适应剪枝（FFN层）
-    print("\n步骤1: 应用层级自适应剪枝...")
-    adaptive_pruner = AdaptivePruner(model)
-    adaptive_pruner.apply_layer_adaptive_pruning(base_sparsity=0.5)
-    
-    # 步骤2: 使用改进的重要性评估进行注意力头剪枝
-    print("\n步骤2: 使用改进的重要性评估剪枝注意力头...")
-    pruner = BERTPruner(model)
-    pruner.compute_head_importance(train_loader, device=device, num_batches=30)
-    heads_to_prune = pruner.get_heads_to_prune(prune_ratio=0.3)
-    pruner.prune_attention_heads(heads_to_prune)
-    
-    # 步骤3: 渐进式微调
-    print("\n步骤3: 应用渐进式恢复训练...")
+    # 应用渐进式恢复训练（创新3）
+    print("\n应用渐进式恢复训练...")
     model, _ = progressive_finetune(
         model, tokenizer, train_loader, val_loader,
         stages=[(2, 2e-5), (2, 1e-5)],
@@ -395,7 +398,7 @@ def run_adaptive_importance_progressive_experiment(base_model, tokenizer, train_
     # 模型信息
     params = count_parameters(model)
     size = get_model_size(model)
-    base_size = get_model_size(base_model)
+    # baseline_size passed as parameter
     
     results = {
         'name': '层级自适应+重要性评估+渐进式训练',
@@ -408,7 +411,7 @@ def run_adaptive_importance_progressive_experiment(base_model, tokenizer, train_
         'params': params['total'],
         'non_zero_params': params['non_zero'],
         'sparsity': params['sparsity'],
-        'compression_ratio': base_size / size if size > 0 else 1.0
+        'compression_ratio': baseline_size / size if baseline_size and size > 0 else 1.0
     }
     
     print_model_info(model, "层级自适应+重要性评估+渐进式训练模型")
@@ -416,10 +419,14 @@ def run_adaptive_importance_progressive_experiment(base_model, tokenizer, train_
     return results, model
 
 
-def run_all_innovations_experiment(base_model, tokenizer, train_loader, val_loader, device='cuda'):
+def run_all_innovations_experiment(exp5_model, tokenizer, train_loader, val_loader, device='cuda', baseline_size=None):
     """
     实验6: 所有创新方法组合 + 动态量化
-    层级自适应 + 改进的重要性评估 + 渐进式恢复训练 + 动态量化
+    在实验5基础上，添加动态量化（创新4）
+    
+    Args:
+        exp5_model: 实验5的模型（已应用层级自适应+重要性评估+渐进式训练）
+        baseline_size: 基线模型大小（MB），用于计算压缩率
     
     Returns:
         dict: 实验结果
@@ -428,37 +435,15 @@ def run_all_innovations_experiment(base_model, tokenizer, train_loader, val_load
     print("实验6: 所有创新方法 + 动态量化")
     print("="*80)
     
-    # 创建模型副本
-    model = copy.deepcopy(base_model)
+    # 创建模型副本（从实验5开始）
+    model = copy.deepcopy(exp5_model)
     model.to(device)
     
-    # 步骤1: 应用层级自适应剪枝（FFN层）
-    print("\n步骤1: 应用层级自适应剪枝...")
-    adaptive_pruner = AdaptivePruner(model)
-    adaptive_pruner.apply_layer_adaptive_pruning(base_sparsity=0.5)
-    
-    # 步骤2: 使用改进的重要性评估进行注意力头剪枝
-    print("\n步骤2: 使用改进的重要性评估剪枝注意力头...")
-    pruner = BERTPruner(model)
-    pruner.compute_head_importance(train_loader, device=device, num_batches=30)
-    heads_to_prune = pruner.get_heads_to_prune(prune_ratio=0.3)
-    pruner.prune_attention_heads(heads_to_prune)
-    
-    # 步骤3: 渐进式微调
-    print("\n步骤3: 应用渐进式恢复训练...")
-    model, _ = progressive_finetune(
-        model, tokenizer, train_loader, val_loader,
-        stages=[(2, 2e-5), (2, 1e-5)],
-        device=device,
-        save_dir='./models/all_innovations_before_quant'
-    )
-    
     # 在量化前将剪枝永久化
-    # make_pruning_permanent already imported at top
     make_pruning_permanent(model)
     
-    # 步骤4: 动态量化
-    print("\n步骤4: 应用动态量化...")
+    # 应用动态量化（创新4）
+    print("\n应用动态量化...")
     quantizer = BERTQuantizer(model)
     quantized_model = quantizer.apply_dynamic_quantization()
     
@@ -471,7 +456,7 @@ def run_all_innovations_experiment(base_model, tokenizer, train_loader, val_load
     # 模型信息
     params = count_parameters(quantized_model)
     size = get_model_size(quantized_model)
-    base_size = get_model_size(base_model)
+    # baseline_size passed as parameter
     
     results = {
         'name': '所有创新方法+量化',
@@ -484,7 +469,7 @@ def run_all_innovations_experiment(base_model, tokenizer, train_loader, val_load
         'params': params['total'],
         'non_zero_params': params['non_zero'],
         'sparsity': params['sparsity'],
-        'compression_ratio': base_size / size if size > 0 else 1.0
+        'compression_ratio': baseline_size / size if baseline_size and size > 0 else 1.0
     }
     
     print_model_info(quantized_model, "所有创新方法+量化模型")
@@ -555,6 +540,7 @@ def main():
     
     # 运行实验
     all_results = []
+    baseline_size = None
     
     # 实验1: 基线模型
     if args.mode in ['all', 'baseline']:
@@ -562,41 +548,73 @@ def main():
             copy.deepcopy(model), tokenizer, train_loader, val_loader, args.device
         )
         all_results.append(baseline_results)
+        baseline_size = baseline_results['size_mb']
     else:
         baseline_model = model
+        baseline_size = get_model_size(baseline_model)
     
-    # 实验2: 统一50%剪枝
+    # 实验2: 统一50%剪枝（从基线开始）
     if args.mode in ['all', 'uniform']:
         uniform_results, _ = run_uniform_pruning_experiment(
-            baseline_model, tokenizer, train_loader, val_loader, args.device
+            baseline_model, tokenizer, train_loader, val_loader, args.device, baseline_size
         )
         all_results.append(uniform_results)
     
-    # 实验3: 层级自适应压缩
+    # 实验3: 层级自适应压缩（从基线开始）
+    exp3_model = None
     if args.mode in ['all', 'layer_adaptive']:
-        layer_adaptive_results, _ = run_layer_adaptive_experiment(
-            baseline_model, tokenizer, train_loader, val_loader, args.device
+        layer_adaptive_results, exp3_model = run_layer_adaptive_experiment(
+            baseline_model, tokenizer, train_loader, val_loader, args.device, baseline_size
         )
         all_results.append(layer_adaptive_results)
     
-    # 实验4: 层级自适应 + 改进的重要性评估
+    # 实验4: 层级自适应 + 改进的重要性评估（从实验3开始，累积创新）
+    exp4_model = None
     if args.mode in ['all', 'adaptive_importance']:
-        adaptive_importance_results, _ = run_adaptive_importance_experiment(
-            baseline_model, tokenizer, train_loader, val_loader, args.device
+        # 如果没有运行实验3，先运行它
+        if exp3_model is None:
+            _, exp3_model = run_layer_adaptive_experiment(
+                baseline_model, tokenizer, train_loader, val_loader, args.device, baseline_size
+            )
+        adaptive_importance_results, exp4_model = run_adaptive_importance_experiment(
+            exp3_model, tokenizer, train_loader, val_loader, args.device, baseline_size
         )
         all_results.append(adaptive_importance_results)
     
-    # 实验5: 层级自适应 + 重要性评估 + 渐进式训练
+    # 实验5: 层级自适应 + 重要性评估 + 渐进式训练（从实验4开始，累积创新）
+    exp5_model = None
     if args.mode in ['all', 'adaptive_progressive']:
-        adaptive_progressive_results, _ = run_adaptive_importance_progressive_experiment(
-            baseline_model, tokenizer, train_loader, val_loader, args.device
+        # 如果没有运行实验4，先运行它
+        if exp4_model is None:
+            if exp3_model is None:
+                _, exp3_model = run_layer_adaptive_experiment(
+                    baseline_model, tokenizer, train_loader, val_loader, args.device, baseline_size
+                )
+            _, exp4_model = run_adaptive_importance_experiment(
+                exp3_model, tokenizer, train_loader, val_loader, args.device, baseline_size
+            )
+        adaptive_progressive_results, exp5_model = run_adaptive_importance_progressive_experiment(
+            exp4_model, tokenizer, train_loader, val_loader, args.device, baseline_size
         )
         all_results.append(adaptive_progressive_results)
     
-    # 实验6: 所有创新方法 + 动态量化
+    # 实验6: 所有创新方法 + 动态量化（从实验5开始，累积创新）
     if args.mode in ['all', 'all_innovations']:
+        # 如果没有运行实验5，先运行它
+        if exp5_model is None:
+            if exp4_model is None:
+                if exp3_model is None:
+                    _, exp3_model = run_layer_adaptive_experiment(
+                        baseline_model, tokenizer, train_loader, val_loader, args.device, baseline_size
+                    )
+                _, exp4_model = run_adaptive_importance_experiment(
+                    exp3_model, tokenizer, train_loader, val_loader, args.device, baseline_size
+                )
+            _, exp5_model = run_adaptive_importance_progressive_experiment(
+                exp4_model, tokenizer, train_loader, val_loader, args.device, baseline_size
+            )
         all_innovations_results, _ = run_all_innovations_experiment(
-            baseline_model, tokenizer, train_loader, val_loader, args.device
+            exp5_model, tokenizer, train_loader, val_loader, args.device, baseline_size
         )
         all_results.append(all_innovations_results)
     
